@@ -1,10 +1,10 @@
 # astound-invoice-bot
 
-This is a bot for automatically downloading and emailing new invoice PDFs from Astound Broadband's website. I use it to automate submitting invoices for filing reimbursements from my employer every month.
+This is a bot for automatically downloading and emailing new invoice PDFs from Astound Broadband's website. I use it to automate submitting receipts for filing reimbursements from my employer every month.
 
 ## Setup
 
-The container will run once and then exit. You can schedule it with ofelia. For example, with Docker Compose:
+The container will run once and then exit. You can schedule it with a simple crontab or with a Docker task scheduler like https://github.com/mcuadros/ofelia. For example, with Docker Compose:
 
 ```yml
 services:
