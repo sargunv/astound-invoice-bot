@@ -1,0 +1,43 @@
+.env.example
+  s_55a48c95f32f32::t_7cca6ee9b8686d 26
+README.md
+  s_55a48c95f32f32::t_764a415d1ad94a 52-54,61-63,77-78,117-118
+src/astound.ts
+  s_55a48c95f32f32::t_b78049014458b4 4,38,65,90,109,167-190,279,328-351,375
+src/config-schema.ts
+  s_55a48c95f32f32::t_ac305458a8b644 21,46-54
+src/config.ts
+  s_55a48c95f32f32::t_0a885210832847 1,4,10-14
+src/db.ts
+  s_55a48c95f32f32::t_8e6b393f9467e1 2,26-34,87-96,104,116,122-123
+src/mail.ts
+  s_55a48c95f32f32::t_af65f777d9df72 8,10-11,26-33,35-36,39,58-61,63,74-78,114-129,131,134-147,158-161
+src/main.ts
+  s_55a48c95f32f32::t_6679c768721daf 5,11-76,79,81,88-97,100,135,140,142-172,175-176
+test/astound.test.ts
+  s_55a48c95f32f32::t_7b07b8b0b094d8 14-15,18-19,22-26,29-30,33-35,134-148,160-162,167,172-176,184,204,209-217
+test/config.test.ts
+  s_55a48c95f32f32::t_7657316db132f0 46-51
+test/db.test.ts
+  s_55a48c95f32f32::t_f22c8be987cbc5 26,34
+test/mail.test.ts
+  s_55a48c95f32f32::t_acd928bc26c8c2 6,11,19-22,33-34,37-40,50,77,90
+test/main.test.ts
+  s_55a48c95f32f32::t_b3cd68a84a8413 1-78
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "628c820d8ebd32f9e69a242702560dddd30df039",
+  "prompts": {},
+  "sessions": {
+    "s_55a48c95f32f32": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "87d39295-d60b-4dda-90fe-317d7932369d",
+        "model": "unknown"
+      },
+      "human_author": "Sargun Vohra <sargunv-headway@users.noreply.github.com>"
+    }
+  }
+}
