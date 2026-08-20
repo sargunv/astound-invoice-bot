@@ -1,13 +1,15 @@
-FROM oven/bun:latest
+FROM oven/bun:1.3.14-alpine@sha256:5acc90a93e91ff07bf72aa90a7c9f0fa189765aec90b47bdbf2152d2196383c0
 
-RUN mkdir -p /data
+WORKDIR /app
+
+RUN mkdir -p /data && chown bun:bun /data
 VOLUME ["/data"]
 ENV SQLITE_DB_PATH="/data/db.sqlite"
 
-COPY package.json ./package.json
-COPY bun.lock ./bun.lock
-COPY src ./src
+COPY --chown=bun:bun package.json bun.lock ./
+RUN bun install --frozen-lockfile --production
 
-RUN bun install
+COPY --chown=bun:bun src ./src
 
-ENTRYPOINT bun run ./src/main.ts
+USER bun
+ENTRYPOINT ["bun", "run", "./src/main.ts"]
