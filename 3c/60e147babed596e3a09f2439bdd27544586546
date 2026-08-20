@@ -1,0 +1,14 @@
+mise.toml
+  h_55e2885a8bba07 1-2
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "3c60e147babed596e3a09f2439bdd27544586546",
+  "prompts": {},
+  "humans": {
+    "h_55e2885a8bba07": {
+      "author": "Sargun Vohra <sargunv-headway@users.noreply.github.com>"
+    }
+  }
+}
