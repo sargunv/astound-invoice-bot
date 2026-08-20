@@ -49,14 +49,18 @@ See [`.env.example`](.env.example) for all settings. Required values are:
 - `SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD`
 - `EMAIL_FROM`, `EMAIL_TO`
 
+`EMAIL_TO` must be one email address so a partially rejected recipient list cannot
+be mistaken for a successful delivery.
+
 For STARTTLS, use `SMTP_PORT=587`, `SMTP_SECURE=false`, and
 `SMTP_REQUIRE_TLS=true`. For implicit TLS, use port 465 and
 `SMTP_SECURE=true`. Boolean values accept `true`/`false`, `1`/`0`, and
 `yes`/`no`.
 
 Resource limits default to 10 MiB per downloaded PDF, 10 attachments per email,
-and 20 MiB total attachment bytes per email. HTTP and SMTP operations have bounded
-timeouts. Adjust the corresponding values in `.env` only if needed.
+and 20 MiB of estimated base64/MIME attachment data per email. HTTP response
+headers and stalled body reads have bounded timeouts; SMTP operations also have an
+absolute deadline. Adjust the corresponding values in `.env` only if needed.
 
 Do not commit `.env`; it contains account and SMTP credentials.
 
@@ -70,6 +74,8 @@ services:
   astound-invoice-bot:
     image: ghcr.io/sargunv/astound-invoice-bot:main
     env_file: .env
+    environment:
+      SQLITE_DB_PATH: /data/db.sqlite
     volumes:
       - astound-invoice-data:/data
 
@@ -108,6 +114,8 @@ store. CI does build and publish multi-architecture images after tests pass.
 - Paths are recorded only after SMTP accepts their email batch. A network failure
   after SMTP acceptance but before the SQLite write can still produce a duplicate;
   deterministic message IDs make that case easier for mail systems to deduplicate.
+- The deterministic message-ID namespace is stored in SQLite. Recreating the
+  database creates a new namespace, allowing an intentional replay to be delivered.
 - If a run reports an unrecognized Astound page, use `bun run smoke`. Update the
   parser fixtures and selectors rather than treating the page as an empty account.
 

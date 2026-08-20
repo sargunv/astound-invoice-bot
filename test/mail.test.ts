@@ -3,11 +3,12 @@ import type { AddressInfo } from "node:net";
 import { SMTPServer } from "smtp-server";
 import {
   buildInvoiceMessage,
-  createAttachmentBatches,
+  estimateAttachmentWireBytes,
   MailClient,
 } from "../src/mail";
 
 const emailConfig = {
+  SMTP_HOST: "smtp.example.com",
   EMAIL_FROM: "invoices@example.com",
   EMAIL_TO: "receipts@example.com",
   EMAIL_SUBJECT: "New invoice",
@@ -15,18 +16,10 @@ const emailConfig = {
 };
 
 describe("invoice email construction", () => {
-  test("batches attachments by count and total bytes", () => {
-    const attachments = new Map([
-      ["/billing/pdf/one", Buffer.alloc(3)],
-      ["/billing/pdf/two", Buffer.alloc(3)],
-      ["/billing/pdf/three", Buffer.alloc(3)],
-    ]);
-
-    expect(createAttachmentBatches(attachments, 2, 6).map((batch) => batch.size)).toEqual([
-      2, 1,
-    ]);
-    expect(() => createAttachmentBatches(attachments, 2, 2)).toThrow(
-      "exceeds the 2-byte email limit",
+  test("accounts for base64 and MIME overhead", () => {
+    expect(estimateAttachmentWireBytes(3)).toBe(1028);
+    expect(estimateAttachmentWireBytes(20 * 1024 * 1024)).toBeGreaterThan(
+      25 * 1024 * 1024,
     );
   });
 
@@ -37,10 +30,14 @@ describe("invoice email construction", () => {
     ]);
     const second = new Map(Array.from(first).reverse());
 
-    const firstMessage = buildInvoiceMessage(emailConfig, first);
-    const secondMessage = buildInvoiceMessage(emailConfig, second);
+    const firstMessage = buildInvoiceMessage(emailConfig, first, "database-one");
+    const secondMessage = buildInvoiceMessage(emailConfig, second, "database-one");
 
     expect(firstMessage.messageId).toBe(secondMessage.messageId);
+    expect(
+      buildInvoiceMessage(emailConfig, first, "database-two").messageId,
+    ).not.toBe(firstMessage.messageId);
+    expect(firstMessage.messageId).toEndWith("@example.com>");
     expect(firstMessage.attachments.map(({ filename }) => filename)).toEqual([
       "Invoice_August.pdf",
       "july.pdf",
@@ -50,7 +47,7 @@ describe("invoice email construction", () => {
   });
 
   test("refuses empty messages", () => {
-    expect(() => buildInvoiceMessage(emailConfig, new Map())).toThrow(
+    expect(() => buildInvoiceMessage(emailConfig, new Map(), "database-one")).toThrow(
       "without attachments",
     );
   });
@@ -77,6 +74,7 @@ describe("invoice email construction", () => {
     try {
       const { port } = server.server.address() as AddressInfo;
       const client = new MailClient({
+        ...emailConfig,
         SMTP_HOST: "127.0.0.1",
         SMTP_PORT: port,
         SMTP_SECURE: false,
@@ -84,12 +82,12 @@ describe("invoice email construction", () => {
         SMTP_USER: "unused",
         SMTP_PASSWORD: "unused",
         SMTP_TIMEOUT_MS: 5_000,
-        ...emailConfig,
       });
 
       await client.verify();
       const result = await client.sendEmail(
         new Map([["/billing/pdf/test.pdf", Buffer.from("%PDF-fixture")]]),
+        "database-one",
       );
 
       expect(result.accepted).toContain("receipts@example.com");

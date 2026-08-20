@@ -5,33 +5,10 @@ import { getConfig } from "./config";
 
 export type InvoiceAttachments = Map<string, Buffer>;
 
-export const createAttachmentBatches = (
-  attachments: InvoiceAttachments,
-  maxAttachments: number,
-  maxBytes: number,
-) => {
-  const batches: InvoiceAttachments[] = [];
-  let batch: InvoiceAttachments = new Map();
-  let batchBytes = 0;
+const MIME_PART_OVERHEAD_BYTES = 1024;
 
-  for (const [path, pdf] of attachments) {
-    if (pdf.byteLength > maxBytes) {
-      throw new Error(`Invoice ${path} exceeds the ${maxBytes}-byte email limit`);
-    }
-
-    if (batch.size >= maxAttachments || batchBytes + pdf.byteLength > maxBytes) {
-      batches.push(batch);
-      batch = new Map();
-      batchBytes = 0;
-    }
-
-    batch.set(path, pdf);
-    batchBytes += pdf.byteLength;
-  }
-
-  if (batch.size > 0) batches.push(batch);
-  return batches;
-};
+export const estimateAttachmentWireBytes = (rawBytes: number) =>
+  Math.ceil(rawBytes / 3) * 4 + MIME_PART_OVERHEAD_BYTES;
 
 const safeFilename = (path: string) => {
   const rawName = path.split("/").pop()?.split("?")[0] || "invoice.pdf";
@@ -46,11 +23,20 @@ const safeFilename = (path: string) => {
   return sanitized.toLowerCase().endsWith(".pdf") ? sanitized : `${sanitized}.pdf`;
 };
 
-const deterministicMessageId = (paths: Iterable<string>) => {
+const messageIdDomain = (from: string, smtpHost: string) =>
+  from.match(/@([a-z0-9.-]+)>?\s*$/i)?.[1] ?? smtpHost;
+
+const deterministicMessageId = (
+  namespace: string,
+  paths: Iterable<string>,
+  domain: string,
+) => {
   const digest = createHash("sha256")
+    .update(namespace)
+    .update("\n")
     .update(Array.from(paths).sort().join("\n"))
     .digest("hex");
-  return `<astound-${digest}@invoice-bot.local>`;
+  return `<astound-${digest}@${domain}>`;
 };
 
 type MailConfig = Pick<
@@ -69,8 +55,12 @@ type MailConfig = Pick<
 >;
 
 export const buildInvoiceMessage = (
-  config: Pick<MailConfig, "EMAIL_FROM" | "EMAIL_TO" | "EMAIL_SUBJECT" | "EMAIL_TEXT">,
+  config: Pick<
+    MailConfig,
+    "SMTP_HOST" | "EMAIL_FROM" | "EMAIL_TO" | "EMAIL_SUBJECT" | "EMAIL_TEXT"
+  >,
   attachments: InvoiceAttachments,
+  deliveryNamespace: string,
 ) => {
   if (attachments.size === 0) {
     throw new Error("Refusing to send an invoice email without attachments");
@@ -81,7 +71,11 @@ export const buildInvoiceMessage = (
     to: config.EMAIL_TO,
     subject: config.EMAIL_SUBJECT,
     text: config.EMAIL_TEXT,
-    messageId: deterministicMessageId(attachments.keys()),
+    messageId: deterministicMessageId(
+      deliveryNamespace,
+      attachments.keys(),
+      messageIdDomain(config.EMAIL_FROM, config.SMTP_HOST),
+    ),
     disableFileAccess: true,
     disableUrlAccess: true,
     attachments: Array.from(attachments.entries()).map(([path, pdf]) => ({
@@ -117,12 +111,40 @@ export class MailClient {
     });
   }
 
-  verify() {
-    return this.smtp.verify();
+  private async withDeadline<T>(operation: Promise<T>, label: string) {
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<never>((_resolve, reject) => {
+      timeout = setTimeout(() => {
+        this.smtp.close();
+        reject(new Error(`${label} exceeded the ${this.config.SMTP_TIMEOUT_MS}ms deadline`));
+      }, this.config.SMTP_TIMEOUT_MS);
+    });
+
+    try {
+      return await Promise.race([operation, deadline]);
+    } finally {
+      if (timeout) clearTimeout(timeout);
+    }
   }
 
-  sendEmail(attachments: InvoiceAttachments) {
-    return this.smtp.sendMail(buildInvoiceMessage(this.config, attachments));
+  verify() {
+    return this.withDeadline(this.smtp.verify(), "SMTP verification");
+  }
+
+  async sendEmail(
+    attachments: InvoiceAttachments,
+    deliveryNamespace: string,
+  ) {
+    const result = await this.withDeadline(
+      this.smtp.sendMail(
+        buildInvoiceMessage(this.config, attachments, deliveryNamespace),
+      ),
+      "SMTP delivery",
+    );
+    if (result.rejected.length > 0) {
+      throw new Error(`SMTP rejected ${result.rejected.length} recipient(s)`);
+    }
+    return result;
   }
 }
 
@@ -133,5 +155,7 @@ const getDefaultClient = () => {
 };
 
 export const verifySmtp = () => getDefaultClient().verify();
-export const sendEmail = (attachments: InvoiceAttachments) =>
-  getDefaultClient().sendEmail(attachments);
+export const sendEmail = (
+  attachments: InvoiceAttachments,
+  deliveryNamespace: string,
+) => getDefaultClient().sendEmail(attachments, deliveryNamespace);

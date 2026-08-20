@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { getConfig } from "./config";
+import { getDatabaseConfig } from "./config";
 
 const RUN_LOCK_NAME = "invoice-delivery";
 const DEFAULT_LOCK_TTL_MS = 60 * 60 * 1000;
@@ -13,7 +13,6 @@ export class InvoiceStore {
       strict: true,
     });
     this.db.run("PRAGMA busy_timeout = 5000;");
-    this.db.run("PRAGMA journal_mode = WAL;");
     this.db.run(
       "CREATE TABLE IF NOT EXISTS processed_paths (path TEXT PRIMARY KEY NOT NULL);",
     );
@@ -24,6 +23,15 @@ export class InvoiceStore {
         acquired_at INTEGER NOT NULL
       );
     `);
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS metadata (
+        key TEXT PRIMARY KEY NOT NULL,
+        value TEXT NOT NULL
+      );
+    `);
+    this.db
+      .query("INSERT OR IGNORE INTO metadata (key, value) VALUES (?, ?)")
+      .run("delivery_namespace", crypto.randomUUID());
   }
 
   hasBeenProcessed(path: string) {
@@ -32,10 +40,6 @@ export class InvoiceStore {
         "SELECT 1 AS found FROM processed_paths WHERE path = ? LIMIT 1",
       )
       .get(path) !== null;
-  }
-
-  markAsProcessed(path: string) {
-    this.markBatchAsProcessed([path]);
   }
 
   markBatchAsProcessed(paths: Iterable<string>) {
@@ -80,6 +84,16 @@ export class InvoiceStore {
     return result.changes === 1;
   }
 
+  getDeliveryNamespace() {
+    const row = this.db
+      .query<{ value: string }, [string]>(
+        "SELECT value FROM metadata WHERE key = ?",
+      )
+      .get("delivery_namespace");
+    if (!row) throw new Error("Delivery namespace is missing from SQLite");
+    return row.value;
+  }
+
   close() {
     this.db.close();
   }
@@ -87,23 +101,23 @@ export class InvoiceStore {
 
 let defaultStore: InvoiceStore | undefined;
 const getDefaultStore = () => {
-  defaultStore ??= new InvoiceStore(getConfig().SQLITE_DB_PATH);
+  defaultStore ??= new InvoiceStore(getDatabaseConfig().SQLITE_DB_PATH);
   return defaultStore;
 };
 
 export const hasBeenProcessed = (path: string) =>
   getDefaultStore().hasBeenProcessed(path);
-export const markAsProcessed = (path: string) =>
-  getDefaultStore().markAsProcessed(path);
 export const markBatchAsProcessed = (paths: Iterable<string>) =>
   getDefaultStore().markBatchAsProcessed(paths);
 export const acquireRunLock = (owner: string) =>
   getDefaultStore().acquireRunLock(
     owner,
     Date.now(),
-    getConfig().RUN_LOCK_TTL_SECONDS * 1000,
+    getDatabaseConfig().RUN_LOCK_TTL_SECONDS * 1000,
   );
 export const releaseRunLock = (owner: string) =>
   getDefaultStore().releaseRunLock(owner);
 export const refreshRunLock = (owner: string) =>
   getDefaultStore().refreshRunLock(owner);
+export const getDeliveryNamespace = () =>
+  getDefaultStore().getDeliveryNamespace();

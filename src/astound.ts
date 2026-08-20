@@ -1,7 +1,7 @@
 import * as cheerio from "cheerio";
 import makeFetchCookie from "fetch-cookie";
 import { CookieJar } from "tough-cookie";
-import { getConfig } from "./config";
+import { parseAstoundConfig } from "./config-schema";
 
 const DEFAULT_BASE_URL = "https://my.astound.com";
 const PDF_PATH_PREFIX = "/billing/pdf/";
@@ -35,12 +35,7 @@ const isLoginPage = ($: cheerio.CheerioAPI) =>
   $('form[action*="/login/login"]').length > 0 ||
   ($('input[name="username"]').length > 0 && $('input[name="password"]').length > 0);
 
-export type ParsedBillsPage = {
-  state: "invoices" | "empty";
-  paths: string[];
-};
-
-export const parseBillsPage = (html: string, baseUrl = DEFAULT_BASE_URL): ParsedBillsPage => {
+export const parseBillsPage = (html: string, baseUrl = DEFAULT_BASE_URL) => {
   const $ = cheerio.load(html);
   if (isLoginPage($)) {
     throw new AstoundPortalError("Astound returned the login page instead of an authenticated bills page");
@@ -67,7 +62,7 @@ export const parseBillsPage = (html: string, baseUrl = DEFAULT_BASE_URL): Parsed
   );
 
   if (paths.length > 0) {
-    return { state: "invoices", paths };
+    return paths;
   }
 
   const billingContainer = $(
@@ -92,7 +87,7 @@ export const parseBillsPage = (html: string, baseUrl = DEFAULT_BASE_URL): Parsed
     );
   }
 
-  return { state: "empty", paths: [] };
+  return [];
 };
 
 type AstoundClientOptions = {
@@ -111,7 +106,7 @@ export class AstoundClient {
   private readonly password: string;
   private readonly timeoutMs: number;
   private readonly maxPdfBytes: number;
-  private cachedBillsPage?: ParsedBillsPage;
+  private cachedBillsPage?: string[];
 
   constructor(options: AstoundClientOptions) {
     this.baseUrl = new URL(options.baseUrl ?? DEFAULT_BASE_URL);
@@ -167,17 +162,32 @@ export class AstoundClient {
     if (!headers["user-agent"]) {
       headers["user-agent"] = "astound-invoice-bot/1.0";
     }
-    const signal = init.signal ?? AbortSignal.timeout(this.timeoutMs);
 
     for (let redirects = 0; redirects <= MAX_REDIRECTS; redirects += 1) {
-      const response = await this.cookieFetch(currentUrl, {
-        ...init,
-        method: currentMethod,
-        body: currentBody,
-        headers,
-        redirect: "manual",
-        signal,
-      });
+      const controller = init.signal ? undefined : new AbortController();
+      const timeout = controller
+        ? setTimeout(() => controller.abort(), this.timeoutMs)
+        : undefined;
+      let response: Response;
+      try {
+        response = await this.cookieFetch(currentUrl, {
+          ...init,
+          method: currentMethod,
+          body: currentBody,
+          headers,
+          redirect: "manual",
+          signal: init.signal ?? controller?.signal,
+        });
+      } catch (error) {
+        if (controller?.signal.aborted) {
+          throw new AstoundPortalError(
+            `Astound request timed out after ${this.timeoutMs}ms: ${currentUrl.pathname}`,
+          );
+        }
+        throw error;
+      } finally {
+        if (timeout) clearTimeout(timeout);
+      }
 
       if (!REDIRECT_STATUSES.has(response.status)) return response;
 
@@ -266,7 +276,7 @@ export class AstoundClient {
   async getInvoicePdfUrls() {
     const billsPage = this.cachedBillsPage ?? (await this.fetchBillsPage());
     this.cachedBillsPage = undefined;
-    return billsPage.paths;
+    return billsPage;
   }
 
   async downloadInvoicePdf(path: string) {
@@ -315,7 +325,30 @@ export class AstoundClient {
     const reader = response.body.getReader();
     let receivedBytes = 0;
     while (true) {
-      const { done, value } = await reader.read();
+      let readTimeout: ReturnType<typeof setTimeout> | undefined;
+      const read = reader.read();
+      const timeout = new Promise<never>((_resolve, reject) => {
+        readTimeout = setTimeout(
+          () =>
+            reject(
+              new AstoundPortalError(
+                `Invoice PDF stalled for ${this.timeoutMs}ms: ${requestedUrl.pathname}`,
+              ),
+            ),
+          this.timeoutMs,
+        );
+      });
+
+      const { done, value } = await (async () => {
+        try {
+          return await Promise.race([read, timeout]);
+        } catch (error) {
+          await reader.cancel();
+          throw error;
+        } finally {
+          if (readTimeout) clearTimeout(readTimeout);
+        }
+      })();
       if (done) break;
 
       receivedBytes += value.byteLength;
@@ -339,7 +372,7 @@ export class AstoundClient {
 
 let defaultClient: AstoundClient | undefined;
 const getDefaultClient = () => {
-  const config = getConfig();
+  const config = parseAstoundConfig(process.env);
   defaultClient ??= new AstoundClient({
     username: config.ASTOUND_USERNAME,
     password: config.ASTOUND_PASSWORD,

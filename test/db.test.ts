@@ -23,7 +23,7 @@ describe("InvoiceStore", () => {
     const second = new InvoiceStore(path);
 
     expect(first.hasBeenProcessed("/billing/pdf/one.pdf")).toBe(false);
-    first.markAsProcessed("/billing/pdf/one.pdf");
+    first.markBatchAsProcessed(["/billing/pdf/one.pdf"]);
     expect(second.hasBeenProcessed("/billing/pdf/one.pdf")).toBe(true);
     first.markBatchAsProcessed([
       "/billing/pdf/two.pdf",
@@ -31,6 +31,7 @@ describe("InvoiceStore", () => {
     ]);
     expect(second.hasBeenProcessed("/billing/pdf/two.pdf")).toBe(true);
     expect(second.hasBeenProcessed("/billing/pdf/three.pdf")).toBe(true);
+    expect(first.getDeliveryNamespace()).toBe(second.getDeliveryNamespace());
 
     first.close();
     second.close();

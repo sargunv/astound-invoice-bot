@@ -18,7 +18,7 @@ export const configSchema = z.object({
   SMTP_PASSWORD: z.string().min(1),
   SMTP_TIMEOUT_MS: positiveInteger(30_000),
   EMAIL_FROM: z.string().min(1),
-  EMAIL_TO: z.string().min(1),
+  EMAIL_TO: z.email(),
   EMAIL_SUBJECT: z.string().min(1).default("Astound invoice found"),
   EMAIL_TEXT: z
     .string()
@@ -43,3 +43,12 @@ export const astoundConfigSchema = configSchema.pick({
 export const parseAstoundConfig = (
   environment: Record<string, string | undefined>,
 ) => astoundConfigSchema.parse(environment);
+
+export const databaseConfigSchema = configSchema.pick({
+  SQLITE_DB_PATH: true,
+  RUN_LOCK_TTL_SECONDS: true,
+});
+
+export const parseDatabaseConfig = (
+  environment: Record<string, string | undefined>,
+) => databaseConfigSchema.parse(environment);

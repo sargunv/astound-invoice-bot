@@ -43,5 +43,11 @@ describe("configuration", () => {
     expect(() =>
       parseConfig({ ...requiredEnvironment, SMTP_PASSWORD: "" }),
     ).toThrow();
+    expect(() =>
+      parseConfig({
+        ...requiredEnvironment,
+        EMAIL_TO: "first@example.com, second@example.com",
+      }),
+    ).toThrow();
   });
 });

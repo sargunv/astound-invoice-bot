@@ -11,37 +11,28 @@ const fixture = (name: string) =>
 
 const billsHtml = await fixture("bills.html");
 const loginHtml = await fixture("login.html");
+const emptyBillsHtml = await fixture("empty-bills.html");
+const unrecognizedHtml = await fixture("unrecognized.html");
 
 describe("Astound HTML parsing", () => {
-  test("extracts the login authenticity token", async () => {
-    expect(parseAuthenticityToken(await fixture("login.html"))).toBe(
-      "fixture-csrf-token",
-    );
+  test("extracts the login authenticity token", () => {
+    expect(parseAuthenticityToken(loginHtml)).toBe("fixture-csrf-token");
   });
 
-  test("extracts and deduplicates same-origin invoice paths", async () => {
-    expect(parseBillsPage(await fixture("bills.html"))).toEqual({
-      state: "invoices",
-      paths: [
-        "/billing/pdf/invoice-2026-07.pdf",
-        "/billing/pdf/invoice-2026-08.pdf?download=1",
-      ],
-    });
+  test("extracts and deduplicates same-origin invoice paths", () => {
+    expect(parseBillsPage(billsHtml)).toEqual([
+      "/billing/pdf/invoice-2026-07.pdf",
+      "/billing/pdf/invoice-2026-08.pdf?download=1",
+    ]);
   });
 
-  test("recognizes an explicit empty state", async () => {
-    expect(parseBillsPage(await fixture("empty-bills.html"))).toEqual({
-      state: "empty",
-      paths: [],
-    });
+  test("recognizes an explicit empty state", () => {
+    expect(parseBillsPage(emptyBillsHtml)).toEqual([]);
   });
 
-  test("rejects login and unknown pages instead of treating them as empty", async () => {
-    const loginPage = await fixture("login.html");
-    const unknownPage = await fixture("unrecognized.html");
-
-    expect(() => parseBillsPage(loginPage)).toThrow(AstoundPortalError);
-    expect(() => parseBillsPage(unknownPage)).toThrow(
+  test("rejects login and unknown pages instead of treating them as empty", () => {
+    expect(() => parseBillsPage(loginHtml)).toThrow(AstoundPortalError);
+    expect(() => parseBillsPage(unrecognizedHtml)).toThrow(
       "refusing to treat it as an empty account",
     );
   });
@@ -140,6 +131,21 @@ describe("AstoundClient", () => {
           );
         }
 
+        if (url.pathname === "/billing/pdf/slow.pdf") {
+          const chunks = ["%PDF-", "slow", "fixture"];
+          return new Response(
+            new ReadableStream({
+              async pull(controller) {
+                await Bun.sleep(40);
+                const chunk = chunks.shift();
+                if (chunk) controller.enqueue(new TextEncoder().encode(chunk));
+                else controller.close();
+              },
+            }),
+            { headers: { "content-type": "application/pdf" } },
+          );
+        }
+
         return new Response("not found", { status: 404 });
       },
     });
@@ -151,15 +157,23 @@ describe("AstoundClient", () => {
     redirectTarget.stop(true);
   });
 
-  test("retains cookies across login redirects and validates PDFs", async () => {
+  const authenticatedClient = async (
+    options: { maxPdfBytes?: number; timeoutMs?: number } = {},
+  ) => {
     const client = new AstoundClient({
       username: "test-user",
       password: "test-password",
       baseUrl,
+      ...options,
     });
 
     const token = await client.getAuthenticityToken();
     await client.login(token);
+    return client;
+  };
+
+  test("retains cookies across login redirects and validates PDFs", async () => {
+    const client = await authenticatedClient();
     expect(await client.getInvoicePdfUrls()).toHaveLength(2);
 
     const pdf = await client.downloadInvoicePdf(
@@ -167,7 +181,7 @@ describe("AstoundClient", () => {
     );
     expect(pdf.subarray(0, 5).toString()).toBe("%PDF-");
 
-    expect(
+    await expect(
       client.downloadInvoicePdf("/billing/pdf/not-a-pdf"),
     ).rejects.toThrow("returned HTML");
   });
@@ -187,17 +201,18 @@ describe("AstoundClient", () => {
   });
 
   test("stops reading chunked PDFs at the configured byte limit", async () => {
-    const client = new AstoundClient({
-      username: "test-user",
-      password: "test-password",
-      baseUrl,
-      maxPdfBytes: 8,
-    });
-
-    const token = await client.getAuthenticityToken();
-    await client.login(token);
+    const client = await authenticatedClient({ maxPdfBytes: 8 });
     await expect(
       client.downloadInvoicePdf("/billing/pdf/too-large.pdf"),
     ).rejects.toThrow("exceeds the 8-byte limit");
+  });
+
+  test("uses the HTTP timeout as an inactivity limit while streaming", async () => {
+    const client = await authenticatedClient({ timeoutMs: 75 });
+    const startedAt = performance.now();
+    const pdf = await client.downloadInvoicePdf("/billing/pdf/slow.pdf");
+
+    expect(pdf.subarray(0, 5).toString()).toBe("%PDF-");
+    expect(performance.now() - startedAt).toBeGreaterThan(100);
   });
 });
